@@ -1,6 +1,6 @@
 //
-//  Candy_PopApp.swift
-//  Candy Pop
+//  Bob_PopApp.swift
+//  Bob Pop
 //
 //  Created by Benjamin Chen on 5/8/25.
 //
