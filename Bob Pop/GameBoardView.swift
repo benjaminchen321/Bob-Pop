@@ -2,144 +2,138 @@ import SwiftUI
 
 struct GameBoardView: View {
     @ObservedObject var gameGrid: GameGrid
-    // Removed particleEmitter from here, ContentView will handle it.
 
     var body: some View {
-        // GeometryReader is used to determine the available space for the grid
         GeometryReader { geometry in
-            // Calculate block size based on available geometry and grid dimensions
             let numCols = CGFloat(gameGrid.columns)
-            let numRows = CGFloat(gameGrid.rows)
+            let numRows = CGFloat(gameGrid.rows) // Used for block size calculation
+            let spacing: CGFloat = 1 // Or your desired spacing
             
-            // NOTE: Spacing should ideally be calculated based on available space and block size
-            // For simplicity, keeping fixed spacing for now, but this can lead to slight inaccuracies
-            // if block size calculation doesn't perfectly account for it.
-            let spacing: CGFloat = 1 // Define spacing once
+            // Calculate block size (ensure this is robust)
             let totalHorizontalSpacing = (numCols - 1) * spacing
-            let totalVerticalSpacing = (numRows - 1) * spacing
-
+            let totalVerticalSpacing = (CGFloat(gameGrid.rows) - 1) * spacing // Use gameGrid.rows
             let availableWidth = geometry.size.width - totalHorizontalSpacing
             let availableHeight = geometry.size.height - totalVerticalSpacing
-
             let blockSizeHorizontal = availableWidth / numCols
-            let blockSizeVertical = availableHeight / numRows
-            
-            // Use the smaller dimension to ensure blocks are square and fit
+            let blockSizeVertical = availableHeight / CGFloat(gameGrid.rows) // Use gameGrid.rows
             let blockSize = min(blockSizeHorizontal, blockSizeVertical)
             let finalBlockSize = max(10, blockSize) // Ensure a minimum block size
 
-            // Use ZStack to allow blocks to be positioned freely for animation
             ZStack {
-                // Iterate through all logical grid positions
-                ForEach(0..<gameGrid.rows, id: \.self) { rowIndex in
-                    ForEach(0..<gameGrid.columns, id: \.self) { colIndex in
-                        
-                        // Get the block (if any) at this logical grid position
-                        let block = gameGrid.blocks[rowIndex][colIndex]
-
-                        if let block = block {
-                            // If a block exists at this logical position, draw it
-                            
-                            // Calculate the position based on the block's *visual* row/col
-                            let visualX = CGFloat(block.visualCol) * (finalBlockSize + spacing) + finalBlockSize / 2
-                            let visualY = CGFloat(block.visualRow) * (finalBlockSize + spacing) + finalBlockSize / 2
-
-                            // Display a GridCellView for the block
-                            GridCellView(block: block,
-                                         size: finalBlockSize,
-                                         action: {
-                                            // Call the blockTapped action on the GameGrid
-                                            gameGrid.blockTapped(row: rowIndex, col: colIndex)
-                                         })
-                            // Position the block view using its visual coordinates
-                            // The anchor point is the center of the block (size/2, size/2)
-                            .position(x: visualX, y: visualY)
-                            // Apply animation based on the block's animation state
-                            // The .popping state will trigger a different animation than position changes
-                            .animation(block.animationState == .popping ?
-                                       .easeOut(duration: 0.3) // Fast fade/scale for pop
-                                       :
-                                       .spring(response: 0.5, dampingFraction: 0.6, blendDuration: 0), // Spring for fall
-                                       value: block.animationState) // Animate changes to the animationState
-                            // Also animate position changes specifically for falling/appearing
-                            .animation(.spring(response: 0.5, dampingFraction: 0.6, blendDuration: 0), value: block.visualRow)
-                            .animation(.spring(response: 0.5, dampingFraction: 0.6, blendDuration: 0), value: block.visualCol)
-
-
-                        } else {
-                            // If no block exists at this logical position, draw the empty cell placeholder
-                            // Position the empty cell placeholder at its logical grid position
-                             RoundedRectangle(cornerRadius: max(4, finalBlockSize * 0.2))
-                                 .fill(Color.black.opacity(0.15)) // Darker, more distinct empty cell
-                                 .frame(width: finalBlockSize, height: finalBlockSize) // Set the frame size
-                                 .position(x: CGFloat(colIndex) * (finalBlockSize + spacing) + finalBlockSize / 2,
-                                           y: CGFloat(rowIndex) * (finalBlockSize + spacing) + finalBlockSize / 2)
-                                 .onTapGesture {
-                                     // Allow tapping empty cells? Current logic ignores, but could be useful for boosters later.
-                                     // gameGrid.blockTapped(row: rowIndex, col: colIndex)
-                                 }
-                        }
+                // Layer 1: Empty cell placeholders (drawn once as background)
+                ForEach(0..<gameGrid.rows, id: \.self) { r_idx in
+                    ForEach(0..<gameGrid.columns, id: \.self) { c_idx in
+                        RoundedRectangle(cornerRadius: max(4, finalBlockSize * 0.2))
+                            .fill(Color.black.opacity(0.15))
+                            .frame(width: finalBlockSize, height: finalBlockSize)
+                            .position(x: CGFloat(c_idx) * (finalBlockSize + spacing) + finalBlockSize / 2,
+                                      y: CGFloat(r_idx) * (finalBlockSize + spacing) + finalBlockSize / 2)
                     }
                 }
+
+                // Layer 2: Iterate over the active blocks.
+                // Each GridCellView is now identified by the block's ID.
+                ForEach(gameGrid.activeBlocksForView) { currentBlock in
+                    // Calculate position based on the block's *current visual* row/col
+                    let visualX = CGFloat(currentBlock.visualCol) * (finalBlockSize + spacing) + finalBlockSize / 2
+                    let visualY = CGFloat(currentBlock.visualRow) * (finalBlockSize + spacing) + finalBlockSize / 2
+
+                    GridCellView(block: currentBlock,
+                                 size: finalBlockSize,
+                                 action: {
+                                    // Tapping uses the block's LOGICAL row/col
+                                    gameGrid.blockTapped(row: currentBlock.row, col: currentBlock.col)
+                                 })
+                    .position(x: visualX, y: visualY)
+                    // These .animation modifiers define HOW the position change animates
+                    // when `currentBlock.visualRow/Col` changes due to model updates in GameGrid.
+                    // The `value` parameter ensures animation only triggers on actual changes to these properties.
+                    .animation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0), value: currentBlock.visualRow)
+                    .animation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0), value: currentBlock.visualCol)
+                }
             }
-            // Set the frame of the ZStack to match the GeometryReader
             .frame(width: geometry.size.width, height: geometry.size.height)
-            // Center the ZStack within the GeometryReader's space
-            // (The .frame above already makes it fill the space, so centering is implicit)
+            // Optional: Clip the ZStack if blocks animating from off-screen should be hidden until they enter the bounds
+            // .clipped()
         }
     }
 }
 
 /// A single cell view representing a block or an empty space
 struct GridCellView: View {
-    let block: GameBlock? // The block data (optional for empty)
-    let size: CGFloat      // The calculated size for this cell
-    let action: () -> Void // The action to perform when the cell is tapped
+    let block: GameBlock?
+    let size: CGFloat
+    let action: () -> Void
 
     var body: some View {
-        // We only draw the block if it exists
         if let currentBlock = block {
-            // Use ZStack for layering effects (from Work Item 1)
             ZStack {
-                // Layer 1: Base shape with darker color and main shadow for depth
-                RoundedRectangle(cornerRadius: max(4, size * 0.2))
-                    .fill(currentBlock.colorType.color.opacity(0.9))
-                    .shadow(color: .black.opacity(0.5), radius: max(1, size * 0.08), x: 0, y: max(1, size * 0.08))
+                // Layer 1: Base shape with main shadow for depth
+                RoundedRectangle(cornerRadius: max(4, size * 0.22)) // Slightly more rounding
+                    .fill(currentBlock.colorType.color.opacity(0.85)) // Base color, slightly less opaque
+                    .shadow(color: .black.opacity(0.4), radius: max(1.5, size * 0.06), x: 0, y: max(1.5, size * 0.1)) // Softer, slightly larger shadow
 
                 // Layer 2: Main color surface with a subtle gradient
-                RoundedRectangle(cornerRadius: max(3, size * 0.18))
-                    .fill(LinearGradient(gradient: Gradient(colors: [currentBlock.colorType.color.opacity(0.95), currentBlock.colorType.color]),
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .padding(max(1, size * 0.05))
+                RoundedRectangle(cornerRadius: max(3.5, size * 0.20)) // Inner rounding
+                    .fill(LinearGradient(gradient: Gradient(colors: [currentBlock.colorType.color.brighter(by: 0.15), currentBlock.colorType.color.darker(by: 0.1)]), // More distinct gradient
+                                         startPoint: .top, endPoint: .bottom))
+                    .padding(max(1, size * 0.06)) // Slightly increased padding for bevel effect
 
-                // Layer 3: Highlight/Gloss effect
-                RoundedRectangle(cornerRadius: max(3, size * 0.18))
-                    .fill(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.7), Color.white.opacity(0)]),
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .padding(max(1, size * 0.05))
-                    .blendMode(.screen)
+                // Layer 3: Top Gloss/Highlight effect
+                // A more defined, curved highlight
+                Path { path in
+                    let padding = max(1.5, size * 0.08)
+                    let rect = CGRect(x: padding, y: padding, width: size - 2 * padding, height: size - 2 * padding)
+                    let cr = max(3, size * 0.18) // Corner radius for highlight shape
 
-                // Layer 4: Subtle inner border/highlight
-                 RoundedRectangle(cornerRadius: max(3, size * 0.18))
-                     .stroke(Color.white.opacity(0.4), lineWidth: max(0.5, size * 0.02))
-                     .padding(max(1, size * 0.05))
+                    path.move(to: CGPoint(x: rect.minX + cr, y: rect.minY))
+                    path.addLine(to: CGPoint(x: rect.maxX - cr, y: rect.minY))
+                    path.addArc(center: CGPoint(x: rect.maxX - cr, y: rect.minY + cr), radius: cr, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+                    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.4)) // Highlight covers top 40%
+                    path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.45), // Curved bottom edge of highlight
+                                      control: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.6))
+                    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + cr))
+                    path.addArc(center: CGPoint(x: rect.minX + cr, y: rect.minY + cr), radius: cr, startAngle: .degrees(180), endAngle: .degrees(-90), clockwise: false)
+                    path.closeSubpath()
+                }
+                .fill(Color.white.opacity(0.65)) // Stronger white highlight
+                .blendMode(.overlay) // Overlay can give a nice sheen
 
-                // Layer 5: Darker inner shadow/border (optional, adds more definition)
-                 RoundedRectangle(cornerRadius: max(3, size * 0.18))
-                     .stroke(Color.black.opacity(0.2), lineWidth: max(0.5, size * 0.02))
-                     .padding(max(1, size * 0.05))
+                // Layer 4: Subtle inner border/highlight for edge definition
+                 RoundedRectangle(cornerRadius: max(3.5, size * 0.20))
+                     .stroke(LinearGradient(gradient: Gradient(colors: [Color.white.opacity(0.5), Color.white.opacity(0.1)]), startPoint: .topLeading, endPoint: .bottomTrailing),
+                             lineWidth: max(0.8, size * 0.025)) // Thinner, gradient stroke
+                     .padding(max(1, size * 0.06))
 
             }
-            .frame(width: size, height: size) // Set the frame size
-            .onTapGesture(perform: action) // Add tap gesture
-            // --- Apply Pop Animation Effects ---
-            // Scale down and fade out when in the .popping state
-            .scaleEffect(currentBlock.animationState == .popping ? 0.1 : 1.0) // Shrink significantly
-            .opacity(currentBlock.animationState == .popping ? 0.0 : 1.0) // Fade out completely
-            // The animation modifier in GameBoardView handles *how* these changes are animated.
+            .frame(width: size, height: size)
+            .onTapGesture(perform: action)
+            .scaleEffect(currentBlock.animationState == .popping ? 0.1 : 1.0)
+            .opacity(currentBlock.animationState == .popping ? 0.0 : 1.0)
+            .animation(.easeOut(duration: 0.3), value: currentBlock.animationState == .popping)
         }
-        // If block is nil, this GridCellView draws nothing.
-        // The empty cell placeholder is now drawn directly in GameBoardView's ZStack.
+    }
+}
+
+// Helper extension for Color (place this outside the struct, e.g., at file level or in a Color+Extensions.swift)
+extension Color {
+    func brighter(by percentage: CGFloat = 0.3) -> Color {
+        return self.adjust(by: abs(percentage) )
+    }
+
+    func darker(by percentage: CGFloat = 0.3) -> Color {
+        return self.adjust(by: -1 * abs(percentage) )
+    }
+
+    func adjust(by percentage: CGFloat = 0.3) -> Color {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        if UIColor(self).getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            return Color(UIColor(red: min(red + percentage, 1.0),
+                               green: min(green + percentage, 1.0),
+                               blue: min(blue + percentage, 1.0),
+                               alpha: alpha))
+        }
+        return self
     }
 }
 

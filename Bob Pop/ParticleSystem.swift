@@ -6,17 +6,17 @@ struct Particle: Identifiable {
     var x: CGFloat // Current X position
     var y: CGFloat // Current Y position
     // Make size and speed more varied for an explosion effect
-    var size: CGFloat = CGFloat.random(in: 3...10) // Smaller fragments
+    var size: CGFloat = CGFloat.random(in: 2...6) // Smaller, more numerous particles
     var color: Color // Color of the particle
     var opacity: Double = 1.0 // Current opacity
     var scale: CGFloat = 1.0 // Current scale
     // Give particles more initial velocity in random directions
-    var xSpeed: CGFloat = CGFloat.random(in: -8.0...8.0) // Wider horizontal spread
-    var ySpeed: CGFloat = CGFloat.random(in: -10.0...3.0) // Stronger initial upward burst, some downward
+    var xSpeed: CGFloat = CGFloat.random(in: -10.0...10.0) // Wider horizontal spread
+    var ySpeed: CGFloat = CGFloat.random(in: -12.0...0.0) // Stronger initial upward/outward burst
     var rotation: Angle = .degrees(Double.random(in: 0...360)) // Initial rotation
     var angularVelocity: Double = Double.random(in: -20...20) // Faster rotation
 
-    var lifetime: Double = Double.random(in: 0.6...1.5) // Slightly longer lifetime for spread
+    var lifetime: Double = Double.random(in: 0.4...0.9) // Shorter lifetime for quicker burst
     var creationTime: Date = Date() // When the particle was created
 
     /// Checks if the particle is still alive based on its lifetime and visual properties
@@ -32,7 +32,7 @@ class ParticleEmitter: ObservableObject {
     private var lastUpdateTime: Date? // Tracks time between updates for consistent movement
 
     /// Emits a burst of particles from a given point
-    func emit(from point: CGPoint, color: Color, count: Int = 15) { // Default particle count per burst
+    func emit(from point: CGPoint, color: Color, count: Int = 25) { // Increased particle count
         for _ in 0..<count {
             particles.append(Particle(x: point.x, y: point.y, color: color))
         }

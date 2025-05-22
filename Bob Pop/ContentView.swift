@@ -102,16 +102,20 @@ struct ContentView: View {
                          transform = transform.rotated(by: CGFloat(particle.rotation.radians))
                          transform = transform.translatedBy(x: -center.x, y: -center.y)
                         
-                         // Draw as a RoundedRectangle (or Circle, etc.)
-                         let path = Path(roundedRect: rect, cornerRadius: particle.size * particle.scale * 0.2)
-                         particleContext.fill(path.applying(transform),
-                                              with: .radialGradient(Gradient(colors: [particle.color.opacity(particle.opacity), Color.clear]),
+                         // Draw as a Circle (simpler, often effective for sparks)
+                         let path = Path(ellipseIn: rect) // Changed from RoundedRectangle
+                         particleContext.fill(path.applying(transform), // Keep transform for rotation
+                                              with: .radialGradient(Gradient(colors: [particle.color.opacity(particle.opacity * 0.8), // Core color
+                                                                                      particle.color.opacity(particle.opacity * 0.5), // Mid fade
+                                                                                      Color.white.opacity(particle.opacity * 0.3),   // Outer glow (whiteish)
+                                                                                      Color.clear]),
                                                                     center: center,
                                                                     startRadius: 0,
-                                                                    endRadius: rect.width / 2))
+                                                                    endRadius: rect.width / 1.5)) // Adjust gradient spread
                      }
                  }
              }
+             .blendMode(.plusLighter) // Try .plusLighter for very bright, additive particles (or keep .screen)
              .allowsHitTesting(false) // Particles should not block interaction
              .edgesIgnoringSafeArea(.all) // Draw anywhere, including safe areas
 

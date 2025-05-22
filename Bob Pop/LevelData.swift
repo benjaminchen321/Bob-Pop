@@ -37,6 +37,8 @@ class GameLevels {
         LevelDefinition(id: 5,
                         objectives: [.popColor(color: .green, count: 30)],
                         maxMoves: 25),
+        LevelDefinition(id: 6, objectives: [.popColor(color: .orange, count: 20)], maxMoves: 20),
+
         // Add more levels up to 10 for the MVP as planned
         // LevelDefinition(id: 6, objectives: [...], maxMoves: ...),
         // ...

@@ -3,17 +3,25 @@ import Combine
 
 /// Manages the game board state, block logic, level progression, and objectives
 class GameGrid: ObservableObject {
-    // MARK: - Published Properties
-    @Published var blocks: [[GameBlock?]] // The 2D array representing the game board
-    @Published var currentLevel: LevelDefinition? // The definition of the current level
-    @Published var movesRemaining: Int = 0 // Moves left in the current level
-    @Published var objectiveProgress: [ObjectiveType: Int] = [:] // Tracks progress towards objectives
-    @Published var levelComplete: Bool = false // Flag indicating if the level is complete
-    @Published var levelFailed: Bool = false // Flag indicating if the level is failed
-    
-    // For pre-game boosters (data only for now, no UI to select them yet)
-    @Published var activeBoosters: Set<BoosterType> = []
+    @Published var blocks: [[GameBlock?]] {
+        didSet {
+            // IMPORTANT: Update the flattened list for the view whenever the 2D array changes.
+            // Ensure this happens on the main thread as it will trigger UI updates.
+            DispatchQueue.main.async {
+                self.activeBlocksForView = self.blocks.flatMap { $0.compactMap { $0 } }
+            }
+        }
+    }
+    // NEW: This is what GameBoardView will iterate over.
+    @Published var activeBlocksForView: [GameBlock] = []
 
+    // ... (other properties: currentLevel, movesRemaining, etc. - no change)
+    @Published var currentLevel: LevelDefinition?
+    @Published var movesRemaining: Int = 0
+    @Published var objectiveProgress: [ObjectiveType: Int] = [:]
+    @Published var levelComplete: Bool = false
+    @Published var levelFailed: Bool = false
+    @Published var activeBoosters: Set<BoosterType> = []
     // MARK: - Constants
     let columns: Int // Number of columns in the grid
     let rows: Int // Number of rows in the grid
@@ -130,78 +138,64 @@ class GameGrid: ObservableObject {
     // MARK: - Game Logic
     /// Handles a block tap event at a specific row and column
     func blockTapped(row: Int, col: Int) {
-        // Ignore taps if the level is already complete or failed
-        guard !levelComplete && !levelFailed else {
-            print("Level already complete or failed. No action.")
-            return
-        }
-        // Ignore taps if no moves are remaining (should be caught by levelFailed, but as safeguard)
-        guard movesRemaining > 0 else {
-            print("No moves remaining.")
-            // If moves are 0 but levelFailed isn't set, mark as failed and check completion
-            if !levelFailed { levelFailed = true; checkLevelCompletion() }
-            return
-        }
-        // Ensure a block exists at the tapped location
-        guard let tappedBlock = blocks[row][col] else {
-            print("Tapped on an empty space.")
-            return
-        }
+        // ... (initial guards - no change) ...
+        guard !levelComplete && !levelFailed, movesRemaining > 0, let tappedBlockOriginal = blocks[row][col] else { return }
+        let connectedGroup = findConnectedBlocks(from: tappedBlockOriginal)
 
-        // Find the group of connected, same-colored blocks
-        let connectedGroup = findConnectedBlocks(from: tappedBlock)
-
-        // Only proceed if the group size meets the minimum requirement (2 or more)
         if connectedGroup.count >= 2 {
-            movesRemaining -= 1 // Decrement moves only for a valid pop
-
+            movesRemaining -= 1
             var poppedBlockInfo: [(row: Int, col: Int, color: BlockColor)] = []
-            
-            // --- Trigger Pop Animation State ---
-            // Iterate through the blocks in the group and mark them for popping.
-            // We need to update the *published* blocks array to trigger the UI change.
-            // Find the blocks in the actual `self.blocks` array and update their state.
-            for blockInGroup in connectedGroup {
-                 if let index = blocks[blockInGroup.row].firstIndex(where: { $0?.id == blockInGroup.id }) {
-                     blocks[blockInGroup.row][index]?.animationState = .popping // Set state to popping
-                     updateObjectiveProgress(forPoppedBlock: blockInGroup) // Update objectives
-                     poppedBlockInfo.append((row: blockInGroup.row, col: blockInGroup.col, color: blockInGroup.colorType)) // Store info for particles
-                 }
-            }
 
-            // Trigger the callback to notify the UI about the popped blocks (for particles)
-            if !poppedBlockInfo.isEmpty {
-                onBlocksPopped(poppedBlockInfo)
+            // --- 1. Mark blocks for popping (visual change driven by GridCellView) ---
+            // Create a mutable copy of the current blocks to modify
+            var nextBlocksStateAfterPopMarking = self.blocks
+            for blockToPopInfo in connectedGroup {
+                var found = false
+                for r_idx in 0..<self.rows {
+                    if let c_idx = nextBlocksStateAfterPopMarking[r_idx].firstIndex(where: { $0?.id == blockToPopInfo.id }) {
+                        if var block = nextBlocksStateAfterPopMarking[r_idx][c_idx] {
+                            block.animationState = .popping
+                            nextBlocksStateAfterPopMarking[r_idx][c_idx] = block
+                            
+                            updateObjectiveProgress(forPoppedBlock: block)
+                            poppedBlockInfo.append((row: block.row, col: block.col, color: block.colorType))
+                            found = true; break
+                        }
+                    }
+                    if found { break }
+                }
             }
+            // Update the main `blocks` array once with all popping states set.
+            // No `withAnimation` here, as the pop is cell-intrinsic.
+            self.blocks = nextBlocksStateAfterPopMarking
+            if !poppedBlockInfo.isEmpty { onBlocksPopped(poppedBlockInfo) }
 
-            // --- Schedule Block Removal and Gravity/Refill ---
-            // Cancel any existing timer to avoid multiple sequences running
+            // --- Define Animation Durations/Delays ---
+            let popVisualDuration: TimeInterval = 0.3
+            let fallSettleEstimate: TimeInterval = 0.4 // Adjusted for potentially faster refill start
+
             popAnimationTimer?.cancel()
-            
-            // Define the work to be done after the pop animation delay
-            let workItem = DispatchWorkItem { [weak self] in
+
+            // --- 2. After pop animation, remove blocks and apply gravity ---
+            let postPopWorkItem = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
-                self.removePoppedBlocks() // Remove blocks marked as popping
-                self.applyGravity() // Make blocks fall
-                self.refillTopRows() // Fill empty spaces from the top
-                // Check completion *after* gravity/refill animations settle visually.
-                // A more robust approach might delay this further or tie it to animation completion.
-                // For now, we'll check immediately after the grid state is updated.
-                self.checkLevelCompletion()
+                
+                self.removePoppedBlocksFromModel() // Updates self.blocks, triggers didSet
+                self.applyGravityAndAnimate()      // Updates self.blocks withAnimation, triggers didSet
+
+                // --- 3. After gravity animation, refill top rows ---
+                let refillWorkItem = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    self.refillTopRowsAndAnimate() // Updates self.blocks withAnimation, triggers didSet
+                    self.checkLevelCompletion()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + fallSettleEstimate, execute: refillWorkItem)
             }
             
-            // Schedule the work item after a delay (e.g., 0.4 seconds for pop animation)
-            let popAnimationDuration: TimeInterval = 0.4 // Adjust this duration to match your desired pop animation length
-            DispatchQueue.main.asyncAfter(deadline: .now() + popAnimationDuration, execute: workItem)
-            
-            // Store the work item so it can be cancelled if another tap happens quickly
-            popAnimationTimer = workItem
-
-        } else {
-            print("Group too small to pop (need >= 2).")
+            DispatchQueue.main.asyncAfter(deadline: .now() + popVisualDuration, execute: postPopWorkItem)
+            self.popAnimationTimer = postPopWorkItem
         }
     }
-
     /// Finds all connected blocks of the same color starting from a given block
     private func findConnectedBlocks(from startBlock: GameBlock) -> Set<GameBlock> {
         var groupToPop = Set<GameBlock>() // Set to store the connected group
@@ -246,93 +240,88 @@ class GameGrid: ObservableObject {
     }
 
     /// Removes blocks that are marked with the .popping animation state
-    private func removePoppedBlocks() {
-        // Create a new temporary grid state
-        var nextBlocks = self.blocks // Start with the current state
-
-        // Iterate through the grid
+    private func removePoppedBlocksFromModel() {
+        var nextBlocks = self.blocks
+        var changed = false
         for r in 0..<rows {
             for c in 0..<columns {
-                // If a block exists and is marked for popping
                 if let block = nextBlocks[r][c], block.animationState == .popping {
-                    nextBlocks[r][c] = nil // Remove the block
+                    nextBlocks[r][c] = nil
+                    changed = true
                 }
             }
         }
-        // Update the published blocks array
-        self.blocks = nextBlocks
-        // SwiftUI will now remove the views for these nil blocks.
+        if changed { self.blocks = nextBlocks } // Triggers didSet for activeBlocksForView
     }
 
 
     /// Applies gravity, making blocks fall into empty spaces
-    private func applyGravity() {
-        // Create a new temporary grid to build the state after gravity
-        var nextBlocks = Array(repeating: Array<GameBlock?>(repeating: nil, count: columns), count: rows)
-        
-        // Keep track of blocks that moved and their new logical positions
-        var movedBlocks: [GameBlock] = []
+    private func applyGravityAndAnimate() {
+        var nextBlocksAfterGravity = Array(repeating: Array<GameBlock?>(repeating: nil, count: columns), count: rows)
+        var changed = false
 
-        // Iterate through each column
+        // Iterate through current self.blocks to determine where they fall
         for c in 0..<columns {
-            var currentWriteRow = rows - 1 // Start writing from the bottom of the new column
-            // Iterate upwards from the bottom of the original column
-            for r in (0..<rows).reversed() {
-                if let block = blocks[r][c] {
-                    // If there's a block, place it in the next available spot in the new grid
-                    // The new logical row is `currentWriteRow`
-                    var blockToMove = block // Get a mutable copy
-                    blockToMove.row = currentWriteRow // Update its logical row
-                    blockToMove.col = c // Update its logical col (stays same)
-                    // Update the visual position to match the new logical position immediately
-                    // This is what SwiftUI will animate *from* the old visual position.
-                    blockToMove.visualRow = currentWriteRow
-                    blockToMove.visualCol = c
-                    blockToMove.animationState = .falling // Mark as falling
+            var currentWriteRow = rows - 1
+            for r_read in (0..<rows).reversed() {
+                if var blockToMove = self.blocks[r_read][c] { // Use self.blocks for reading current state
+                    if blockToMove.row != currentWriteRow || blockToMove.visualRow != currentWriteRow {
+                        changed = true
+                    }
+                    blockToMove.row = currentWriteRow         // Update LOGICAL row
+                    blockToMove.visualRow = currentWriteRow   // Set TARGET visual row
+                    blockToMove.animationState = .falling
                     
-                    nextBlocks[currentWriteRow][c] = blockToMove
-                    movedBlocks.append(blockToMove) // Keep track of blocks that ended up in the new grid
-                    currentWriteRow -= 1 // Move up to the next spot in the new column
+                    nextBlocksAfterGravity[currentWriteRow][c] = blockToMove
+                    currentWriteRow -= 1
                 }
             }
         }
-        
-        // Update the published blocks array
-        self.blocks = nextBlocks
-        // SwiftUI will now animate the blocks from their old visual positions to their new ones.
+
+        if changed {
+            // The `withAnimation` block tells SwiftUI to animate changes resulting from this state update.
+            // The actual animation definition (spring) is in GameBoardView.
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0)) {
+                self.blocks = nextBlocksAfterGravity // Triggers didSet for activeBlocksForView
+            }
+        } else {
+            // If no blocks actually moved, but some might have been removed,
+            // ensure activeBlocksForView is consistent if it wasn't updated by removePopped.
+            // This case should be covered by removePoppedBlocksFromModel if it made changes.
+        }
     }
 
     /// Fills any remaining empty spaces in the grid from the top with new random blocks
-    private func refillTopRows() {
-        // Create a new temporary grid based on the current state (after gravity)
-        var nextBlocks = self.blocks // Start with the current state
+    private func refillTopRowsAndAnimate() {
+        var nextBlocksAfterRefill = self.blocks // Start with current state (after gravity)
+        var changed = false
 
-        // Iterate through each column
         for c in 0..<columns {
-            // Iterate downwards from the top of the column
-            for r in 0..<rows {
-                if nextBlocks[r][c] == nil { // If the current spot is empty
-                    // Create a new random block for this spot
+            for r_target in 0..<rows {
+                if nextBlocksAfterRefill[r_target][c] == nil {
                     if let randomColor = BlockColor.allCases.randomElement() {
-                        // For new blocks, their logical position is (r, c).
-                        // Their *initial visual position* should be *above* the grid (e.g., row - 1 or -2)
-                        // so they animate *down* into their final spot.
-                        var newBlock = GameBlock(colorType: randomColor, row: r, col: c, initialVisualRow: -1) // Start visually above row 0
+                        var newBlock = GameBlock(
+                            colorType: randomColor,
+                            row: r_target, // Logical target row
+                            col: c,
+                            currentVisualRow: r_target - rows, // Start visually off-screen
+                            state: .appearing
+                        )
+                        // Set its TARGET visualRow for the animation
+                        newBlock.visualRow = r_target
                         
-                        // Immediately set the visual position to the *final* logical position
-                        // SwiftUI will animate from the initialVisualRow (-1) to this final visualRow (r)
-                        newBlock.visualRow = r
-                        newBlock.visualCol = c // visualCol stays the same
-                        newBlock.animationState = .appearing // Mark as appearing/falling
-
-                        nextBlocks[r][c] = newBlock
+                        nextBlocksAfterRefill[r_target][c] = newBlock
+                        changed = true
                     }
                 }
             }
         }
-        // Update the published blocks array
-        self.blocks = nextBlocks
-        // SwiftUI will now animate the new blocks falling into place.
+
+        if changed {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0)) {
+                self.blocks = nextBlocksAfterRefill // Triggers didSet for activeBlocksForView
+            }
+        }
     }
 
     /// Updates the progress towards objectives based on a popped block
