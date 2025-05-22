@@ -20,17 +20,6 @@ struct GameBoardView: View {
             let finalBlockSize = max(10, blockSize) // Ensure a minimum block size
 
             ZStack {
-                // Layer 1: Empty cell placeholders (drawn once as background)
-                ForEach(0..<gameGrid.rows, id: \.self) { r_idx in
-                    ForEach(0..<gameGrid.columns, id: \.self) { c_idx in
-                        RoundedRectangle(cornerRadius: max(4, finalBlockSize * 0.2))
-                            .fill(Color.black.opacity(0.15))
-                            .frame(width: finalBlockSize, height: finalBlockSize)
-                            .position(x: CGFloat(c_idx) * (finalBlockSize + spacing) + finalBlockSize / 2,
-                                      y: CGFloat(r_idx) * (finalBlockSize + spacing) + finalBlockSize / 2)
-                    }
-                }
-
                 // Layer 2: Iterate over the active blocks.
                 // Each GridCellView is now identified by the block's ID.
                 ForEach(gameGrid.activeBlocksForView) { currentBlock in
@@ -48,8 +37,8 @@ struct GameBoardView: View {
                     // These .animation modifiers define HOW the position change animates
                     // when `currentBlock.visualRow/Col` changes due to model updates in GameGrid.
                     // The `value` parameter ensures animation only triggers on actual changes to these properties.
-                    .animation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0), value: currentBlock.visualRow)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0), value: currentBlock.visualCol)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85, blendDuration: 0), value: currentBlock.visualRow) // MODIFIED
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85, blendDuration: 0), value: currentBlock.visualCol) // MODIFIED
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)

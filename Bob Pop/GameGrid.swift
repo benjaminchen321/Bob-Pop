@@ -171,8 +171,8 @@ class GameGrid: ObservableObject {
             if !poppedBlockInfo.isEmpty { onBlocksPopped(poppedBlockInfo) }
 
             // --- Define Animation Durations/Delays ---
-            let popVisualDuration: TimeInterval = 0.3
-            let fallSettleEstimate: TimeInterval = 0.4 // Adjusted for potentially faster refill start
+            let popVisualDuration: TimeInterval = 0.05
+            let fallSettleEstimate: TimeInterval = 0.35 // Adjusted for potentially faster refill start
 
             popAnimationTimer?.cancel()
 
@@ -281,7 +281,7 @@ class GameGrid: ObservableObject {
         if changed {
             // The `withAnimation` block tells SwiftUI to animate changes resulting from this state update.
             // The actual animation definition (spring) is in GameBoardView.
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0)) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85, blendDuration: 0)) { // MODIFIED
                 self.blocks = nextBlocksAfterGravity // Triggers didSet for activeBlocksForView
             }
         } else {
@@ -318,7 +318,7 @@ class GameGrid: ObservableObject {
         }
 
         if changed {
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.65, blendDuration: 0)) {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85, blendDuration: 0)) { // MODIFIED
                 self.blocks = nextBlocksAfterRefill // Triggers didSet for activeBlocksForView
             }
         }
